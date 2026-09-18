@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Keeps the distance, tracks the face with the head, mimics the arms. Needs person_tracker.launch (robot base PC) and
+       pitch_correction.launch. Robot: imu, body_activation, wheels, pilot, NOT body_movement.
+       With roslaunch there is no keyboard: start/stop with the gesture or
+         rostopic pub -1 /$ROBOT_NAME/person_follower/toggle std_msgs/Empty
+       For the Enter key use rosrun:  rosrun alterego_mimic person_follower.py -->
+  <arg name="mirror"        default="true"/>
+  <arg name="keep_distance" default="true"/>
+  <arg name="track_head"    default="true"/>
+  <arg name="turn_base"     default="true"/>
+  <arg name="mimic_arms"    default="true"/>
+
+  <group ns="$(env ROBOT_NAME)">
+    <node pkg="alterego_mimic" type="person_follower.py" name="person_follower" output="screen">
+      <param name="mirror"        value="$(arg mirror)"/>
+      <param name="keep_distance" value="$(arg keep_distance)"/>
+      <param name="track_head"    value="$(arg track_head)"/>
+      <param name="turn_base"     value="$(arg turn_base)"/>
+      <param name="mimic_arms"    value="$(arg mimic_arms)"/>
+    </node>
+  </group>
+</launch>

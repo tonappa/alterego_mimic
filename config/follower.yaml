@@ -1,0 +1,71 @@
+# person_follower.py defaults. Override one value with the launch args of follower.launch or, with rosrun,
+# with _name:=value (e.g. rosrun alterego_mimic person_follower.py _mirror:=false).
+
+rate: 50                        # [Hz] control loop
+
+# ---- what to do (all three on by default)
+keep_distance: true             # base forward/backward to keep the distance of the start
+track_head: true                # the head keeps the face of the person at the image center
+turn_base: true                 # the base turns when the neck reaches its limit (only while following)
+mimic_arms: true                # arms follow the person's arms (upper arm direction + elbow)
+mirror: true                    # arms only. true: like a mirror (your right arm -> its left arm).
+                                # false: same side (your right arm -> its right arm)
+
+# ---- person
+kp_conf: 0.3                    # min keypoint confidence
+person_timeout: 0.5             # [s] older data = person lost: base stopped, head and arms hold
+lost_stop_s: 2.0                # [s] lost longer than this while following: stop, arms down slowly, head
+                                # straight, back to idle (a new start is needed)
+
+# ---- start / stop gesture: both wrists above the nose
+gesture_enabled: true
+gesture_hold: 1.0               # [s]
+gesture_lockout: 3.0            # [s] no new toggle after a toggle
+
+# ---- distance (d = distance camera -> torso, e = d - d_start)
+k_lin: 0.8                      # [m/s per m]  person 0.3 m closer -> (0.3 - dead_lin) * 0.8 = 0.16 m/s backwards
+dead_lin: 0.10                  # [m] no motion within +-10 cm of the start distance
+max_lin: 0.25                   # [m/s] (the LQR also clamps at wheels/max_lin_vel, 0.25 on v2)
+acc_lin: 0.5                    # [m/s^2]
+vel_filter_tau: 0.2             # [s] low-pass on v
+min_distance: 0.7               # [m] never forward when the person is closer than this
+
+# ---- head: face tracking. Error = angle of the face from the camera axis (person_face of the tracker)
+head_track_idle: true           # track the face also before the start and after a stop (to see the gesture)
+camera_on_head: true            # true: the RealSense turns with the head (URDF: camera on zed on head_robot),
+                                # the neck turns at k_head * error until the face is centered.
+                                # false: fixed camera, the head points at the face angle
+k_head: 2.0                     # [1/s] face 0.2 rad off center -> neck at 0.4 rad/s
+head_dead: 0.03                 # [rad] no head motion within it
+head_yaw_max: 0.6               # [rad]
+head_pitch_up_max: 0.4          # [rad]
+head_pitch_down_max: 0.3        # [rad]
+yaw_sign: 1                     # -1 if the neck turns away from the face
+pitch_sign: 1                   # -1 if the head nods away from the face
+head_speed_deg_s: 60            # [deg/s]
+face_lost_return_s: 3.0         # [s] face lost longer than this: head slowly back to the center
+
+# ---- base rotation (turn_base): only while following, never in idle. The base turns the way the head looks
+#      when |neck yaw| > turn_start, at turn_gain * (|neck yaw| - turn_stop), and stops below turn_stop.
+turn_start: 0.35                # [rad] about 60 % of head_yaw_max
+turn_stop: 0.10                 # [rad] the base stops when the neck is back within this
+turn_gain: 1.0                  # [rad/s per rad]
+turn_max: 0.4                   # [rad/s] (the LQR also clamps at wheels/max_ang_vel, 0.5 on v2)
+turn_acc: 1.0                   # [rad/s^2]
+turn_filter_tau: 0.2            # [s] low-pass on the yaw rate
+turn_sign: 1                    # angular.z > 0 = turn left (as ego_dance). -1 if the base turns away from the person
+
+# ---- arms. Joints of the right arm (the left is mirrored): q0 shoulder flexion (90 = arm forward,
+#      horizontal), q1 shoulder cube (-90 = arm out to the side, horizontal), q3 elbow. q2 and q4 stay at 0.
+q0_limits_deg: [-20, 90]
+q1_limits_deg: [-90, 10]
+elbow_limits_deg: [0, 110]
+max_arm_elevation_deg: 0        # upper arm never above horizontal (the shoulder cannot lift more)
+hand_above_shoulder_max: 0.0    # [m] hand at most this much above the shoulder (the elbow is reduced)
+joint_speed_deg_s: 60           # [deg/s] max joint speed while mimicking
+descent_speed_deg_s: 20         # [deg/s] back to zero (stop, Ctrl-C, pitch fault)
+joint_filter_tau: 0.15          # [s] low-pass on the joint targets (keypoint jitter)
+stiffness: []                   # [] = the robot values (left/right stiffness_vec), else one value per cube
+
+# ---- safety
+max_pitch: 0.25                 # [rad] |pitch| above this: stop, arms and head back to zero

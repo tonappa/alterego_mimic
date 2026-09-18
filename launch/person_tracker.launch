@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Person tracker: RealSense (pyrealsense2) + YOLOv8-pose. Run it ON THE ROBOT BASE PC, where the camera is.
+         roslaunch alterego_mimic person_tracker.launch
+       Topics under /$ROBOT_NAME/: person_pose, person_position, person_keypoints_3d,
+       person_tracker/image/compressed (see scripts/person_tracker.py) -->
+  <arg name="conda_env"   default="ros_yolo"/>  <!-- conda env with ultralytics and pyrealsense2 -->
+  <arg name="rate"        default="15"/>        <!-- processed frames per second -->
+  <arg name="conf"        default="0.5"/>       <!-- person detection threshold -->
+  <arg name="kp_conf"     default="0.3"/>       <!-- keypoint threshold for the 3D points -->
+  <arg name="select"      default="largest"/>   <!-- largest | nearest (by torso depth) -->
+  <arg name="device"      default=""/>          <!-- "" ultralytics default, cpu, 0 = first GPU -->
+  <arg name="serial"      default=""/>          <!-- RealSense serial number, "" = first camera -->
+  <arg name="show_window" default="auto"/>      <!-- auto | true | false: OpenCV window on the robot PC -->
+  <arg name="weights"     default=""/>          <!-- "" = models/yolov8n-pose.pt of this package -->
+
+  <group ns="$(env ROBOT_NAME)">
+    <node pkg="alterego_mimic" type="person_tracker_wrapper.sh" name="person_tracker" output="screen">
+      <env name="PERSON_TRACKER_CONDA_ENV" value="$(arg conda_env)"/>
+      <param name="rate"        value="$(arg rate)"/>
+      <param name="conf"        value="$(arg conf)"/>
+      <param name="kp_conf"     value="$(arg kp_conf)"/>
+      <param name="select"      value="$(arg select)"/>
+      <param name="device"      value="$(arg device)" type="str"/>
+      <param name="serial"      value="$(arg serial)" type="str"/>
+      <param name="show_window" value="$(arg show_window)" type="str"/>
+      <param name="weights"     value="$(arg weights)" type="str"/>
+    </node>
+  </group>
+</launch>

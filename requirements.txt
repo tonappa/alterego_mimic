@@ -1,0 +1,12 @@
+# Python packages of the conda env used by the wrapper (same versions as alterego_object_detection)
+PyYAML==6.0.2
+rospkg==1.5.1
+catkin-pkg==1.1.0
+opencv-python==4.10.0.84
+empy==4.2
+ultralytics==8.3.49
+pyrealsense2==2.66.0
+numpy>=1.23.2
+pillow>=10.4.0
+torch>=2.4.1
+torchvision>=0.19.1

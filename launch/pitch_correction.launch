@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- LQR pitch offset from the arm pose (alterego_body_inv_kin/pitch_correction), normally started by
+       body_movement.launch, which must be OFF here. Start it before the follower, stop it after the arms
+       are down: the LQR keeps the last offset it received. -->
+  <arg name="AlterEgoVersion" default="2"/>
+  <group ns="$(env ROBOT_NAME)">
+    <rosparam command="load" file="$(find alterego_robot)/config/v$(arg AlterEgoVersion)/pitch_correction.yaml"/>
+    <node pkg="alterego_body_inv_kin" name="pitch_correction" type="pitch_correction" output="screen"/>
+  </group>
+</launch>

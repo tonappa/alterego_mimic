@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>alterego_mimic</name>
+  <version>0.1.0</version>
+  <description>
+    Person following for AlterEgo v2 with a RealSense on the head. person_tracker (robot base PC, conda,
+    YOLOv8-pose) publishes the person's 2D and 3D keypoints, torso position and face direction.
+    person_follower keeps the distance, looks at the face, turns the base when the neck reaches its limit and
+    mimics the arms. A browser GUI runs a built-in simulation or monitors and commands the real robot.
+  </description>
+  <maintainer email="do.park@iit.it">Do Won Park</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <!-- person_follower.py and launch/pitch_correction.launch (robot stack packages) -->
+  <exec_depend>alterego_msgs</exec_depend>
+  <exec_depend>alterego_body_inv_kin</exec_depend>
+  <exec_depend>alterego_robot</exec_depend>
+</package>
