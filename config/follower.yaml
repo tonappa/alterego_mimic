@@ -1,7 +1,7 @@
 # person_follower.py defaults. Override one value with the launch args of follower.launch or, with rosrun,
 # with _name:=value (e.g. rosrun alterego_mimic person_follower.py _mirror:=false).
 
-rate: 50                        # [Hz] control loop
+rate: 100                        # [Hz] control loop
 
 # ---- what to do (all three on by default)
 keep_distance: true             # base forward/backward to keep the distance of the start
@@ -57,15 +57,15 @@ turn_sign: 1                    # angular.z > 0 = turn left (as ego_dance). -1 i
 
 # ---- arms. Joints of the right arm (the left is mirrored): q0 shoulder flexion (90 = arm forward,
 #      horizontal), q1 shoulder cube (-90 = arm out to the side, horizontal), q3 elbow. q2 and q4 stay at 0.
-q0_limits_deg: [-20, 90]
-q1_limits_deg: [-90, 10]
+q0_limits_deg: [-20, 110]
+q1_limits_deg: [-110, 10]
 elbow_limits_deg: [0, 110]
-max_arm_elevation_deg: 0        # upper arm never above horizontal (the shoulder cannot lift more)
-hand_above_shoulder_max: 0.0    # [m] hand at most this much above the shoulder (the elbow is reduced)
+max_arm_elevation_deg: 20        # upper arm never above horizontal (the shoulder cannot lift more)
+hand_above_shoulder_max: 0.2    # [m] hand at most this much above the shoulder (the elbow is reduced)
 joint_speed_deg_s: 60           # [deg/s] max joint speed while mimicking
 descent_speed_deg_s: 20         # [deg/s] back to zero (stop, Ctrl-C, pitch fault)
 joint_filter_tau: 0.15          # [s] low-pass on the joint targets (keypoint jitter)
-stiffness: []                   # [] = the robot values (left/right stiffness_vec), else one value per cube
+stiffness: [0.45, 0.45, 0.45, 0.45, 0.45]                   # [] = the robot values (left/right stiffness_vec), else one value per cube
 
 # ---- safety
 max_pitch: 0.25                 # [rad] |pitch| above this: stop, arms and head back to zero
