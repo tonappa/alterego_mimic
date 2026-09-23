@@ -79,6 +79,7 @@ for mod, names in [("std_msgs.msg", ["Float64", "Float64MultiArray", "Empty", "S
     sys.modules[mod] = m
 sys.modules["geometry_msgs.msg"].Twist = Twist
 os.environ["ROBOT_NAME"] = "rb"
+params["~rate"] = 50                     # the loops below count 50 Hz cycles, whatever follower.yaml says
 params["/rb/CMD_VEL_IN_topic"] = "cmd_vel"
 params["/rb/left/stiffness_vec"] = [0.2] * 5; params["/rb/right/stiffness_vec"] = [0.2] * 5
 

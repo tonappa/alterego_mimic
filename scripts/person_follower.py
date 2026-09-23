@@ -31,12 +31,17 @@ import time
 
 import numpy as np
 
-OPTIONS = ("mirror", "keep_distance", "mimic_arms", "track_head", "turn_base")
+import gestures
+
+OPTIONS = ("mirror", "keep_distance", "mimic_arms", "track_head", "turn_base",
+           "gesture_expand_attract", "gesture_pirouette", "gesture_freeze", "gesture_drop")
 # Parameters that the GUI / command topic may change at run time, with the accepted range
 TUNABLE = {"k_lin": (0.0, 3.0), "dead_lin": (0.0, 0.5), "max_lin": (0.0, 0.5), "min_distance": (0.3, 3.0),
            "k_head": (0.0, 6.0), "head_dead": (0.0, 0.3), "joint_speed_deg_s": (5.0, 180.0),
-           "gesture_hold": (0.2, 5.0), "max_arm_elevation_deg": (-60.0, 0.0),
-           "turn_start": (0.1, 0.6), "turn_gain": (0.0, 3.0), "turn_max": (0.0, 0.6)}
+           "gesture_hold": (0.2, 5.0), "max_arm_elevation_deg": (-60.0, 30.0),
+           "turn_start": (0.1, 0.6), "turn_gain": (0.0, 3.0), "turn_max": (0.0, 0.6),
+           "expand_rate": (0.0, 0.5), "attract_rate": (0.0, 0.5), "max_follow_distance": (1.0, 4.0),
+           "attract_min_distance": (0.6, 2.0), "pirouette_speed": (0.2, 1.5), "pirouette_min_distance": (0.8, 3.0)}
 N_KP = 17
 NOSE, L_EYE, R_EYE, L_EAR, R_EAR = 0, 1, 2, 3, 4
 L_SH, R_SH, L_EL, R_EL, L_WR, R_WR, L_HIP, R_HIP = 5, 6, 7, 8, 9, 10, 11, 12
@@ -245,6 +250,8 @@ class PersonFollower:
         self.keep_distance, self.track_head, self.mimic_arms = P("keep_distance"), P("track_head"), P("mimic_arms")
         self.turn_base = P("turn_base")
         self.mirror = P("mirror")
+        for k in OPTIONS[5:]:                           # dance vocabulary switches
+            setattr(self, k, bool(P(k)))
         self.rate_hz = float(P("rate"))
         self.dt = 1.0 / self.rate_hz
 
@@ -283,6 +290,12 @@ class PersonFollower:
         self.turning = False                # hysteresis of the base rotation
         self.last_flex = {"r": None, "l": None}   # last elbow flexion seen, per robot arm
         self.t_last_visible = 0.0           # last time the person was visible while following
+        # dance vocabulary
+        self.gest = gestures.GestureDetector(self.P)
+        self.t_gest = 0.0                   # camera frame last given to the detector
+        self.primitive = None               # running movement primitive (pirouette, drop), a dict
+        self.grace_until = 0.0              # the lost-person rule is suspended until then (after a pirouette)
+        self.yaw_imu = None; self.t_yaw = 0.0
 
         # ---- I/O
         rospy.Subscriber(ns + "person_pose", Float64MultiArray, self.cb_pose, queue_size=1)
@@ -348,6 +361,9 @@ class PersonFollower:
 
     def cb_lower(self, m):
         self.pitch = float(m.pitch_angle)
+        if hasattr(m, "yaw_angle"):             # used to measure the pirouette
+            self.yaw_imu = float(m.yaw_angle)
+            self.t_yaw = time.time()
 
     def request_toggle(self, source):
         self.rospy.loginfo("person_follower: toggle (%s)", source)
@@ -402,6 +418,8 @@ class PersonFollower:
         self.turning = False
         self.last_flex = {"r": None, "l": None}
         self.t_last_visible = time.time()
+        self.gest.reset()
+        self.primitive = None
         self.active = True
         rospy.loginfo("person_follower: STARTED  distance %s  (mirror=%s, distance=%s, head tracking=%s, base turn=%s, "
                       "arms=%s)", "%.2f m" % d if d is not None else "-", self.mirror, self.keep_distance,
@@ -409,6 +427,10 @@ class PersonFollower:
 
     def stop(self, why):
         self.active = False
+        if self.primitive is not None:
+            self.primitive = None
+            self.vel_releasing = not (self.keep_distance or self.turn_base)
+        self.gest.reset()
         self.v = self.v_f = 0.0
         self.w = self.w_f = 0.0
         self.turning = False
@@ -423,6 +445,20 @@ class PersonFollower:
         with self.lock:
             kp3d, kp2d, t3 = self.kp3d.copy(), self.kp2d.copy(), self.t_kp3d
         visible = self.person_visible()
+        g = self.gest
+        g_valid = not g.stale(time.time(), P("person_timeout"))
+
+        # ---- FREEZE: hold the arm pose, base slows to a stop (head keeps looking at the person)
+        if self.gesture_freeze and g_valid and g.freeze:
+            self.ramp_base(0.0, 0.0)
+            return
+
+        # ---- EXPAND / ATTRACT: while the pose is held, the target distance moves
+        if self.gesture_expand_attract and g_valid and self.d_ref is not None:
+            if g.expand:
+                self.d_ref = min(self.d_ref + P("expand_rate") * self.dt, max(P("max_follow_distance"), self.d_ref))
+            elif g.attract:
+                self.d_ref = max(self.d_ref - P("attract_rate") * self.dt, min(P("attract_min_distance"), self.d_ref))
 
         # ---- distance
         if self.keep_distance:
@@ -484,6 +520,138 @@ class PersonFollower:
                     # left arm = mirror of the right arm solution for the mirrored direction
                     self.q_l_tgt = -self.arm.solve(mirror_y(t_l), flex_l, "l")[:self.n_cubes]
                     self.last_flex["l"] = flex_l
+
+        # ---- ATTRACT: instead of copying the hands on the chest, the robot reaches both arms toward the person
+        if self.mimic_arms and self.gesture_expand_attract and g_valid and g.attract:
+            reach = np.zeros(self.n_cubes)
+            reach[0], reach[3] = math.radians(P("attract_q0_deg")), math.radians(P("attract_elbow_deg"))
+            self.q_r_tgt, self.q_l_tgt = reach.copy(), -reach
+
+    # ------------------------------------------------------------------------------------ dance vocabulary
+    def ramp_base(self, v_target, w_target):
+        """Base velocities toward targets with the usual acceleration limits (freeze, primitives)."""
+        P = self.P
+        self.v_f = v_target
+        self.v = float(np.clip(v_target, self.v - P("acc_lin") * self.dt, self.v + P("acc_lin") * self.dt))
+        self.w_f = w_target
+        self.w = float(np.clip(w_target, self.w - P("turn_acc") * self.dt, self.w + P("turn_acc") * self.dt))
+
+    def update_gestures(self):
+        """Give each new camera frame to the detector; start a primitive on an event."""
+        with self.lock:
+            kp3d, t3 = self.kp3d.copy(), self.t_kp3d
+        if t3 == self.t_gest:
+            return
+        self.t_gest = t3
+        f = None
+        if self.person_visible() and self.fresh(t3):
+            up_hint = camera_up(self.yaw_cmd, self.pitch_cmd) if self.P("camera_on_head") else (0.0, -1.0, 0.0)
+            f = gestures.body_features(kp3d, person_frame(kp3d, up_hint))
+        enabled = dict(expand_attract=self.gesture_expand_attract, pirouette=self.gesture_pirouette,
+                       freeze=self.gesture_freeze, drop=self.gesture_drop)
+        for name, arg in self.gest.update(time.time(), f, enabled):
+            self.start_primitive(name, arg)
+            if self.primitive is not None:
+                break
+
+    def start_primitive(self, name, arg):
+        P, rospy, now = self.P, self.rospy, time.time()
+        if name == "PIROUETTE":
+            d = self.distance()
+            if d is None or d < P("pirouette_min_distance"):
+                rospy.logwarn("person_follower: pirouette ignored, person at %s (min %.1f m)",
+                              "%.2f m" % d if d is not None else "unknown distance", P("pirouette_min_distance"))
+                return
+            if self.pub_vel is None:
+                if not self.cmd_vel_topic:
+                    rospy.logwarn("person_follower: pirouette ignored, CMD_VEL_IN_topic not set")
+                    return
+                self.pub_vel = self.rospy.Publisher(self.cmd_vel_topic, self.Twist, queue_size=1)
+            # person's right arm up -> +1 = turn left (ROS convention), toward the person's right side
+            direction = P("pirouette_direction") * (1.0 if arg == "right" else -1.0)
+            self.primitive = dict(name=name, phase="prepare", t0=now, dir=direction, turned=0.0,
+                                  last_yaw=None, side=arg)
+            rospy.loginfo("person_follower: PIROUETTE (%s arm up) -> turn %s", arg, "left" if direction > 0 else "right")
+        elif name == "DROP":
+            self.primitive = dict(name=name, phase="down", t0=now)
+            rospy.loginfo("person_follower: DROP")
+
+    def update_primitive(self):
+        """Run the current primitive: it owns base, arms and neck until it ends."""
+        P, pr, now = self.P, self.primitive, time.time()
+        z = np.zeros(self.n_cubes)
+        if pr["name"] == "PIROUETTE":
+            spread = z.copy(); spread[1] = -math.radians(P("pirouette_spread_deg"))
+            if pr["phase"] == "prepare":
+                self.q_r_tgt, self.q_l_tgt = spread.copy(), -spread
+                self.yaw_tgt = pr["dir"] * P("pirouette_head_yaw")          # look toward the turn
+                self.pitch_tgt = 0.0
+                self.ramp_base(0.0, 0.0)
+                if now - pr["t0"] >= P("pirouette_prepare_s"):
+                    pr.update(phase="spin", t_spin=now)
+            elif pr["phase"] == "spin":
+                self.q_r_tgt, self.q_l_tgt = spread.copy(), -spread
+                self.yaw_tgt = pr["dir"] * P("pirouette_head_yaw")
+                # turned angle: from the IMU yaw if it is live, else from the commanded rate
+                if self.yaw_imu is not None and now - self.t_yaw < 0.2:
+                    if pr["last_yaw"] is not None:
+                        dy = self.yaw_imu - pr["last_yaw"]
+                        pr["turned"] += abs(math.atan2(math.sin(dy), math.cos(dy)))
+                    pr["last_yaw"] = self.yaw_imu
+                else:
+                    pr["turned"] += abs(self.w) * self.dt
+                    pr["last_yaw"] = None
+                remaining = max(0.0, 2 * math.pi - pr["turned"])
+                w_des = min(P("pirouette_speed"), math.sqrt(2 * P("pirouette_acc") * remaining))
+                w_cmd = pr["dir"] * w_des
+                self.w_f = w_cmd
+                step = P("pirouette_acc") * self.dt
+                self.w = float(np.clip(w_cmd, self.w - step, self.w + step))
+                self.v = self.v_f = 0.0
+                if remaining < math.radians(2) or now - pr["t_spin"] > P("pirouette_timeout_s"):
+                    pr.update(phase="settle", t_settle=now)
+            elif pr["phase"] == "settle":
+                self.q_r_tgt, self.q_l_tgt = z.copy(), z.copy()
+                self.yaw_tgt = self.pitch_tgt = 0.0
+                self.ramp_base(0.0, 0.0)
+                if now - pr["t_settle"] >= P("pirouette_settle_s") and abs(self.w) < 1e-3:
+                    self.end_primitive("pirouette done, %.0f deg" % math.degrees(pr["turned"]))
+        elif pr["name"] == "DROP":
+            self.q_r_tgt, self.q_l_tgt = z.copy(), z.copy()
+            self.pitch_tgt = P("drop_head_pitch") * P("pitch_sign")        # > 0 = head down
+            self.ramp_base(0.0, 0.0)
+            if now - pr["t0"] >= P("drop_hold_s"):
+                self.end_primitive("drop done")
+
+    def end_primitive(self, why):
+        self.primitive = None
+        self.grace_until = time.time() + self.P("pirouette_reacquire_s")
+        self.t_last_visible = time.time()
+        self.turning = False
+        self.w = self.w_f = 0.0
+        self.gest.reset()
+        self.gest.cooldown_until = time.time() + self.P("gesture_cooldown_s")
+        if not (self.keep_distance or self.turn_base):
+            self.vel_releasing = True
+        self.rospy.loginfo("person_follower: %s, back to mimicking", why)
+
+    def gesture_label(self):
+        if self.primitive is not None:
+            pr = self.primitive
+            if pr["name"] == "PIROUETTE":
+                return "PIROUETTE %s %s" % (pr["phase"], "%.0f%%" % (100 * pr["turned"] / (2 * math.pi))
+                                            if pr["phase"] == "spin" else "")
+            return pr["name"]
+        g = self.gest
+        if not self.active or g.stale(time.time(), self.P("person_timeout")):
+            return ""
+        if self.gesture_freeze and g.freeze:
+            return "FREEZE"
+        if self.gesture_expand_attract and g.expand:
+            return "EXPAND"
+        if self.gesture_expand_attract and g.attract:
+            return "ATTRACT"
+        return ""
 
     def update_head(self):
         """Face tracking. camera_on_head (the RealSense is on the head, as in the URDF): the neck turns at
@@ -573,6 +741,7 @@ class PersonFollower:
                     yaw_cmd=float(self.yaw_cmd), pitch_cmd=float(self.pitch_cmd),
                     q_r=[float(x) for x in self.q_r], q_l=[float(x) for x in self.q_l],
                     person_visible=bool(self.person_visible()),
+                    gesture=self.gesture_label(),
                     options={k: bool(getattr(self, k)) for k in OPTIONS},
                     params={k: float(self.P(k)) for k in TUNABLE})
 
@@ -591,10 +760,11 @@ class PersonFollower:
     def publish(self):
         F, FA = self.Float64, self.Float64MultiArray
         P_sign = self.P("turn_sign")                     # -1 if the base turns away from the person
-        if self.pub_vel is not None and (self.keep_distance or self.turn_base or self.vel_releasing):
+        prim = self.active and self.primitive is not None
+        if self.pub_vel is not None and (self.keep_distance or self.turn_base or prim or self.vel_releasing):
             t = self.Twist()
-            t.linear.x = self.v if (self.active and self.keep_distance) else 0.0
-            t.angular.z = P_sign * self.w if (self.active and self.turn_base) else 0.0
+            t.linear.x = self.v if (self.active and self.keep_distance and not prim) else 0.0
+            t.angular.z = P_sign * self.w if (self.active and (self.turn_base or prim)) else 0.0
             self.pub_vel.publish(t)
             self.vel_releasing = False
         tol = math.radians(1.0)
@@ -700,6 +870,8 @@ class PersonFollower:
         if self.active:
             if self.person_visible():
                 self.t_last_visible = time.time()
+            elif self.primitive is not None or time.time() < self.grace_until:
+                pass        # a pirouette does not need the person; after it, time to find them again
             elif time.time() - self.t_last_visible > self.P("lost_stop_s"):
                 # Person lost: stop, arms down slowly, head straight, back to idle. A new start is needed:
                 # the robot does not resume by itself when someone appears again.
@@ -711,10 +883,15 @@ class PersonFollower:
             self.stop("pitch out of bound")
             self.yaw_tgt = self.pitch_tgt = 0.0
 
-        if self.track_head and (self.active or self.P("head_track_idle")):
+        if self.active and self.primitive is None:
+            self.update_gestures()
+
+        if self.track_head and (self.active or self.P("head_track_idle")) and self.primitive is None:
             self.update_head()
 
-        if self.active:
+        if self.active and self.primitive is not None:
+            self.update_primitive()
+        elif self.active:
             self.update_targets()
             d = self.distance()
             self.rospy.loginfo_throttle(1.0, "person_follower: d %s ref %.2f -> v %+.2f w %+.2f | head yaw %+.2f pitch %+.2f | "
@@ -722,7 +899,11 @@ class PersonFollower:
                                             "%.2f" % d if d is not None else "--", self.d_ref or 0, self.v, self.w,
                                             self.yaw_cmd, self.pitch_cmd, *np.degrees(self.q_r[[0, 1, 3]]),
                                             *np.degrees(self.q_l[[0, 1, 3]])))
-        self.step_commands(self.P("joint_speed_deg_s") if self.active else self.P("descent_speed_deg_s"))
+        if self.active and self.primitive is not None and self.primitive["name"] == "DROP":
+            speed = self.P("drop_arm_speed_deg_s")
+        else:
+            speed = self.P("joint_speed_deg_s") if self.active else self.P("descent_speed_deg_s")
+        self.step_commands(speed)
         self.publish()
         return True
 

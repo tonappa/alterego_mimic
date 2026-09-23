@@ -60,12 +60,61 @@ turn_sign: 1                    # angular.z > 0 = turn left (as ego_dance). -1 i
 q0_limits_deg: [-20, 110]
 q1_limits_deg: [-110, 10]
 elbow_limits_deg: [0, 110]
-max_arm_elevation_deg: 20        # upper arm never above horizontal (the shoulder cannot lift more)
+max_arm_elevation_deg: 20       # [deg] upper arm at most this much above horizontal
 hand_above_shoulder_max: 0.2    # [m] hand at most this much above the shoulder (the elbow is reduced)
 joint_speed_deg_s: 60           # [deg/s] max joint speed while mimicking
 descent_speed_deg_s: 20         # [deg/s] back to zero (stop, Ctrl-C, pitch fault)
 joint_filter_tau: 0.15          # [s] low-pass on the joint targets (keypoint jitter)
-stiffness: [0.45, 0.45, 0.45, 0.45, 0.45]                   # [] = the robot values (left/right stiffness_vec), else one value per cube
+stiffness: [0.45, 0.45, 0.45, 0.45, 0.45]   # [] = the robot values (left/right stiffness_vec), else one value per cube
+
+# ---- dance vocabulary V1 (only while following). Poses in the person's body frame.
+gesture_grace_s: 0.25           # [s] a pose may disappear for this long (missed frames) without resetting its timer
+gesture_cooldown_s: 1.5         # [s] no new pirouette / drop after one
+
+# EXPAND: both arms open to the side at about shoulder height, held -> the target distance grows
+# ATTRACT: both hands on the chest, held -> the target distance shrinks and the robot reaches its arms out
+gesture_expand_attract: true
+expand_hold: 0.8                # [s] before the distance starts changing (a quick opening is only mimicked)
+expand_rate: 0.15               # [m/s] growth of the target distance while EXPAND is held
+expand_elevation_tol_deg: 25    # [deg] arms within this of horizontal
+expand_elbow_max_deg: 35        # [deg] elbows at most this bent
+attract_hold: 0.5               # [s]
+attract_rate: 0.15              # [m/s] reduction of the target distance while ATTRACT is held
+attract_hand_lateral_max: 0.20  # [m] hands within this of the body midline
+attract_elbow_min_deg: 60       # [deg] elbows at least this bent
+attract_forearm_inward_min: 0.5 # forearms pointing toward the body midline (cosine): tells it from forearms forward
+max_follow_distance: 3.0        # [m] upper bound of the target distance (depth gets noisy beyond)
+attract_min_distance: 1.0       # [m] lower bound while attracting (the robot's hands reach ~0.4 m ahead)
+attract_q0_deg: 80              # [deg] robot arms reaching toward the person: shoulder flexion
+attract_elbow_deg: 15           # [deg] and elbow
+
+# PIROUETTE: one hand above the head, the other arm below the shoulder, held -> 360 deg turn on the spot
+gesture_pirouette: true
+pirouette_hold: 1.0             # [s]
+pirouette_above_head: 0.05      # [m] the hand at least this above the nose
+pirouette_min_distance: 1.2     # [m] ignored if the person is closer (the open arms sweep ~0.6 m around the robot)
+pirouette_direction: 1          # 1: your right arm up -> the robot turns to its left (toward your right side). -1: opposite
+pirouette_speed: 1.0            # [rad/s] (the LQR clamps at wheels/max_ang_vel)
+pirouette_acc: 1.5              # [rad/s^2]
+pirouette_prepare_s: 0.8        # [s] arms open and neck turned before the turn starts
+pirouette_spread_deg: 80        # [deg] arms open to the side during the turn
+pirouette_head_yaw: 0.45        # [rad] neck turned toward the direction of the turn
+pirouette_settle_s: 0.8         # [s] after the turn: arms down, neck straight
+pirouette_reacquire_s: 3.0      # [s] after the turn, time to find the person again before the lost rule applies
+pirouette_timeout_s: 20.0       # [s] safety: end the turn anyway
+
+# FREEZE (off): arms crossed in front of the chest -> hold the pose, base still
+gesture_freeze: false
+freeze_hold: 0.5                # [s]
+freeze_release_s: 1.0           # [s] stays frozen this long after the arms are uncrossed
+
+# DROP (off): both hands down fast -> arms down fast, head down, base still, then back to mimicking
+gesture_drop: false
+drop_window_s: 0.6              # [s]
+drop_amplitude: 0.4             # [m] both hands at least this lower within the window, starting at shoulder height
+drop_arm_speed_deg_s: 90        # [deg/s]
+drop_head_pitch: 0.25           # [rad] head down
+drop_hold_s: 1.5                # [s]
 
 # ---- safety
 max_pitch: 0.25                 # [rad] |pitch| above this: stop, arms and head back to zero

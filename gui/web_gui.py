@@ -107,7 +107,7 @@ class SimBackend:
             view = self.sim.last_view
             links = self.kin.link_poses(s["q_r"], s["q_l"], s["yaw"], s["pitch"], (s["base_x"], s["base_y"]), s["base_yaw"])
             out = dict(
-                t=s["t"], active=st["active"], d=st["d"], d_ref=st["d_ref"], v=s["v"],
+                t=s["t"], active=st["active"], d=st["d"], d_ref=st["d_ref"], v=s["v"], gesture=st.get("gesture", ""),
                 yaw=math.degrees(s["yaw"]), pitch=math.degrees(s["pitch"]),
                 q_r=[math.degrees(x) for x in s["q_r"]], q_l=[math.degrees(x) for x in s["q_l"]],
                 base_x=s["base_x"], base_y=s["base_y"], base_yaw=s["base_yaw"], w=s["w"],

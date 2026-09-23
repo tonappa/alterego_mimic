@@ -209,11 +209,12 @@ class RealBackend:
                 view["face_uv"] = [320.0 - 615.0 * math.tan(face[1]), 240.0 - 615.0 * math.tan(face[2])]
                 view["face_est"] = not any(vis[:5])
 
-        d, d_ref, v_cmd, w_cmd, active = (None, None, 0.0, 0.0, None)
+        d, d_ref, v_cmd, w_cmd, active, gesture = (None, None, 0.0, 0.0, None, "")
         options, params = {}, {}
         if status is not None:
             d, d_ref, v_cmd, active = status.get("d"), status.get("d_ref"), status.get("v", 0.0), status.get("active")
             w_cmd = status.get("w", 0.0)
+            gesture = status.get("gesture", "")
             options, params = status.get("options", {}), status.get("params", {})
 
         def conn(key, label, limit=1.0):
@@ -223,7 +224,7 @@ class RealBackend:
         connections = [conn("upper", "Robot state"), conn("lower", "Wheels and IMU"), conn("pose2d", "Person tracker"),
                        conn("image", "Camera image", 2.0), conn("status", "Person follower", 2.0)]
         return dict(
-            t=time.time() - self.t0, active=active, d=d, d_ref=d_ref, v=v_cmd, w=w_cmd,
+            t=time.time() - self.t0, active=active, d=d, d_ref=d_ref, v=v_cmd, w=w_cmd, gesture=gesture,
             yaw=math.degrees(yaw), pitch=math.degrees(pitch),
             q_r=[math.degrees(a) for a in q_r], q_l=[math.degrees(a) for a in q_l],
             base_x=x, base_y=y, base_yaw=th,

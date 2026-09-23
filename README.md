@@ -7,7 +7,11 @@ The robot sees the person in front of it and, once started, does four things:
 - **Keeps the distance.** It memorizes the distance at the start. When you come closer it backs off, and when you step back it comes forward.
 - **Looks at your face.** The neck turns so that your face stays at the center of the camera image. The robot therefore never loses sight of you when you move sideways or crouch.
 - **Turns toward you.** When the neck gets close to its limit because you keep moving sideways, the base turns the same way, so you can walk around the robot and it keeps facing you.
-- **Mimics your arms.** The direction of your upper arm and the angle of your elbow are copied onto the shoulder and elbow cubes. By default it works like a mirror: your right arm moves its left arm. The arm never goes above horizontal, because the shoulder cannot lift more.
+- **Mimics your arms.** The direction of your upper arm and the angle of your elbow are copied onto the shoulder and elbow cubes. By default it works like a mirror: your right arm moves its left arm. The upper arm goes at most `max_arm_elevation_deg` above horizontal (20° in `follower.yaml`).
+
+On top of the mimicking, it recognizes a small **dance vocabulary** (see [Dance vocabulary V1](#dance-vocabulary-v1)):
+open arms held → it moves away, hands on the chest held → it reaches its arms out and comes closer, one hand above
+the head → pirouette.
 
 You start and stop it with the Enter key, with a gesture (both hands above the head for 1 s), from the GUI, or with a ROS topic.
 
@@ -52,10 +56,12 @@ Published topics, all under `/$ROBOT_NAME/`:
 
 **`person_tracker_wrapper.sh`** starts `person_tracker.py` with the Python of a conda env (default `ros_yolo`), without hardcoded paths. It looks for the conda installation in `$CONDA_BASE`, `~/miniconda3`, `~/anaconda3`, `~/miniforge3` and `/opt/conda`, then falls back to `conda info --base`.
 
+**`gestures.py`** recognizes the dance vocabulary on the person's 3D keypoints, in the person's body frame (no ROS, tested offline). It has the pose rules, the hold timers with a grace for missed frames, one event per hold and the cooldown. `person_follower` calls it once per camera frame while following.
+
 **`person_follower.py`** is the behavior node. It uses plain ROS Python, so it runs on any PC connected to the robot's master.
 
 - **Two states: idle and following.** At the start it memorizes the distance of the person.
-- **Every cycle, at 50 Hz, four independent behaviors:**
+- **Every cycle, at `rate` Hz (100 in `follower.yaml`), four independent behaviors:**
   - **Distance.** From `person_position` it computes `v = k_lin × (d − d_start)` with a dead band, then limits, filters and ramps it before sending it to `cmd_vel`. It never moves forward below `min_distance`.
   - **Head.** From `person_face`, the neck turns at `k_head × error` until the face is at the image center. This works also before the start, so the robot sees the gesture. If the face is lost, the head holds; after 3 s it goes back to the center.
   - **Base rotation.** Only while following, never in idle. When |neck yaw| exceeds `turn_start` (0.35 rad, about 60 % of the neck range), the base turns the same way at `turn_gain × (|neck yaw| − turn_stop)`, up to `turn_max` (0.4 rad/s), and stops when the neck is back within `turn_stop` (0.1 rad). The camera is on the head, so while the base turns the face moves back toward the image center and the neck recenters by itself. The command is `cmd_vel.angular.z`, positive to the left as in `ego_dance`; set `turn_sign: -1` if the base turns away from the person.
@@ -71,12 +77,12 @@ Published topics, all under `/$ROBOT_NAME/`:
 
   | Joint | Limit | What it prevents |
   |---|---|---|
-  | q0, shoulder flexion | `q0_limits_deg: [-20, 90]` | At most 20° backward, at most horizontal forward. Set the minimum to 0 to never go backward. |
-  | q1, shoulder cube | `q1_limits_deg: [-90, 10]` | Out to the side at most horizontal, across the body at most 10° |
+  | q0, shoulder flexion | `q0_limits_deg: [-20, 110]` | At most 20° backward, at most 20° above horizontal forward. Set the minimum to 0 to never go backward. |
+  | q1, shoulder cube | `q1_limits_deg: [-110, 10]` | Out to the side at most 20° above horizontal (or 20° behind the shoulder line with the arm horizontal), across the body at most 10° |
   | q3, elbow | `elbow_limits_deg: [0, 110]` | The elbow never bends the wrong way (below 0°) nor beyond 110° |
   | q2, q4 | fixed at 0 | No twist of the upper arm or of the wrist |
-  | Upper arm | `max_arm_elevation_deg: 0` | Never above horizontal |
-  | Hand | `hand_above_shoulder_max: 0.0` | Never above the shoulder: the elbow is reduced if needed |
+  | Upper arm | `max_arm_elevation_deg: 20` | At most 20° above horizontal, whatever q0 and q1 allow. 0 = never above horizontal |
+  | Hand | `hand_above_shoulder_max: 0.2` | At most 0.2 m above the shoulder: the elbow is reduced if needed |
   | Speed | `joint_speed_deg_s: 60`, `descent_speed_deg_s: 20` | Every joint at most 60 °/s while mimicking, 20 °/s when going back to zero |
   | Wrist not seen | last elbow flexion kept | The elbow does not snap straight when the camera loses the wrist |
 
@@ -124,7 +130,10 @@ Parameters that the GUI can change at run time, with the accepted range:
 | `max_lin` | 0 – 0.5 m/s | `turn_start` | 0.1 – 0.6 rad |
 | `min_distance` | 0.3 – 3 m | `turn_gain` | 0 – 3 |
 | `joint_speed_deg_s` | 5 – 180 °/s | `turn_max` | 0 – 0.6 rad/s |
-| `gesture_hold` | 0.2 – 5 s | `max_arm_elevation_deg` | −60 – 0° |
+| `gesture_hold` | 0.2 – 5 s | `max_arm_elevation_deg` | −60 – 30° |
+| `expand_rate` | 0 – 0.5 m/s | `attract_rate` | 0 – 0.5 m/s |
+| `max_follow_distance` | 1 – 4 m | `attract_min_distance` | 0.6 – 2 m |
+| `pirouette_speed` | 0.2 – 1.5 rad/s | `pirouette_min_distance` | 0.8 – 3 m |
 
 The joint limits, the stiffness, the signs (`yaw_sign`, `pitch_sign`, `turn_sign`) and the safety timeouts are not in the GUI on purpose: they are set once, with the robot still, and need a restart of the follower.
 
@@ -160,12 +169,45 @@ Offline tests, with no ROS, camera or robot:
 | `test_offline.py` | Tracker geometry, message layouts, face estimate |
 | `test_follower_offline.py` | Arm model and limits, mirror mapping, distance, stop, face tracking in closed loop with delay, parameters read once, commands and ranges, `cmd_vel` release, base rotation logic (never in idle, threshold, hysteresis, both sides, person lost), elbow kept when the wrist is not seen, person lost: base stopped, then idle with arms down and head straight, no automatic restart |
 | `test_gui_real_offline.py` | Real-robot backend of the GUI with a fake ROS: odometry, person in the world frame, face marker, commands, errors |
+| `test_vocabulary_offline.py` | Dance vocabulary: pose rules (EXPAND, ATTRACT, PIROUETTE, FREEZE, DROP), hold, grace, one event per hold, cooldown; in the simulator EXPAND and ATTRACT move the target distance, ATTRACT reaches the arms out, the pirouette turns 360° both ways with neck and arms, is ignored when the person is too close, both hands up still stop; one minute of random ordinary arm movements to count false detections |
 | `test_sim_offline.py` | Closed loop: in idle the base never moves; while following, the person walks to 60°, 120° and −45° around the robot and the robot turns to face them, with the neck back near the center and the distance kept; the person crosses in front of the robot too fast, the robot loses them, stops, lowers the arms and straightens the head |
 
 ### Other files
 
 - **`create_env.sh`** creates the conda env from `requirements.txt`, only if it does not exist yet.
 - **`models/`** holds the YOLO weights (`yolov8n-pose.pt`), downloaded on the first run.
+
+---
+
+## Dance vocabulary V1
+
+While the robot is following, `person_follower` also recognizes these gestures. They are recognized in the
+person's body frame, so they do not depend on where the camera looks. Every one of them can be switched on and off
+in `follower.yaml` or from the GUI (*Settings*).
+
+| Gesture | You | The robot | Default |
+|---|---|---|---|
+| Start / stop | Both hands above the head, 1 s | Starts or stops following | on |
+| `EXPAND` | Both arms open to the side, about at shoulder height, **held** | Its arms mimic yours, so it opens them too. While you hold the pose, the target distance grows by `expand_rate` (0.15 m/s) and the robot moves away. | on |
+| `ATTRACT` | Both hands on the chest, **held** | It reaches both arms out toward you. While you hold the pose, the target distance shrinks by `attract_rate` and the robot comes closer. | on |
+| `PIROUETTE` | One hand above the head, the other arm below the shoulder, 1 s | Opens its arms, turns its neck toward the turn, turns 360° on the spot, then lowers the arms, straightens the neck and goes back to mimicking | on |
+| `FREEZE` | Arms crossed in front of the chest, held | Holds the arm pose, the base slows to a stop, the head keeps looking at you | **off** |
+| `DROP` | Both hands moved down fast, from shoulder height | Arms down fast, head down, base still for `drop_hold_s`, then back to mimicking | **off** |
+
+**Distance control with `EXPAND` and `ATTRACT`.** The longer you hold the pose, the more the target distance changes. When you release it, the robot keeps the new distance. The target stays between `attract_min_distance` (1.0 m, because the robot's hands reach about 0.4 m ahead while attracting) and `max_follow_distance` (3.0 m, the depth gets noisy beyond). The pose must be held for `expand_hold` (0.8 s) or `attract_hold` (0.5 s) before anything changes: a quick opening of the arms while dancing is only mimicked. `ATTRACT` needs the forearms pointing toward the body midline, so elbows bent with the forearms forward, a common mimic pose, are not taken for it.
+
+**Pirouette.**
+1. You raise one hand above the head for `pirouette_hold` (1 s), with the other arm below the shoulder. With both hands up it is the stop gesture, not a pirouette.
+2. If you are closer than `pirouette_min_distance` (1.2 m), the gesture is ignored: the open arms sweep about 0.6 m around the robot. After an `ATTRACT` down to 1.0 m, use `EXPAND` before a pirouette.
+3. Preparation (`pirouette_prepare_s`): arms open to `pirouette_spread_deg`, neck turned by `pirouette_head_yaw` toward the direction of the turn.
+4. Turn: 360° at up to `pirouette_speed` (1.0 rad/s) with the acceleration `pirouette_acc`. The turned angle comes from the IMU yaw (`alterego_state/lowerbody`), not from the camera. Distance keeping, mimicking and the lost-person rule are suspended.
+5. End (`pirouette_settle_s`): arms down, neck straight. The robot then has `pirouette_reacquire_s` (3 s) to find you again before the lost-person rule applies, and goes back to mimicking.
+
+Direction: `pirouette_direction: 1` makes your **right** hand up turn the robot to **its left**, toward your right side, consistent with the mirror. The command goes through `turn_sign` like the base rotation, so the same sign fix applies. The speed is limited by the LQR's `wheels/max_ang_vel` in the robot's `general.yaml`; with 1.5 rad/s there, a pirouette at 1.0 rad/s takes about 7 s with the ramps.
+
+**In the GUI**, the card on the right shows the recognized gesture (*Gesture*, e.g. `ATTRACT` or `PIROUETTE spin 58%`) and the target distance. In simulation, the chips *Open arms (expand)*, *Hands on chest (attract)*, *Right hand up (pirouette)* and *Left hand up (pirouette)* put the simulated person in each pose.
+
+**Tuning.** All thresholds and timings are in the *dance vocabulary V1* section of `follower.yaml`. If `EXPAND` starts when you only wanted to open the arms, raise `expand_hold`. If a pose is not recognized, check the person in the camera view of the GUI: the hands and elbows must be in the image.
 
 ---
 

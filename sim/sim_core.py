@@ -185,8 +185,38 @@ def keyframe(t, keys):
     return nrm(keys[-1][1])
 
 
+# Arm poses of the demo person: (elevation, azimuth out, elbow, forearm twist) in degrees, see arm_dirs()
+DOWN_P = (-90, 0, 0, 0)
+UP_P = (80, 20, 10, 0)            # both hands above the head: start / stop
+T_P = (0, 88, 5, 0)               # arms open to the side: EXPAND
+CHEST_P = (-55, 5, 120, 80)       # hands on the chest: ATTRACT
+RAISED_P = (80, 15, 5, 0)         # one hand above the head: PIROUETTE
+R_KEYS = [(0, DOWN_P), (4.6, DOWN_P), (5.2, UP_P), (7.0, UP_P), (7.8, DOWN_P),
+          (20.5, DOWN_P), (21.7, (0, 0, 0, 0)), (22.6, (0, 0, 0, 0)), (23.6, (0, 88, 0, 0)), (24.4, (0, 88, 0, 0)),
+          (25.2, (15, 60, 0, 0)), (26.0, (15, 60, 0, 0)), (26.6, (0, 88, 0, 0)), (27.4, DOWN_P),
+          (38.3, DOWN_P), (38.9, T_P), (41.8, T_P), (42.4, DOWN_P),
+          (44.3, DOWN_P), (44.9, CHEST_P), (48.8, CHEST_P), (49.4, DOWN_P),
+          (50.8, DOWN_P), (51.3, RAISED_P), (52.7, RAISED_P), (53.3, DOWN_P),
+          (62.2, DOWN_P), (62.8, UP_P), (64.4, UP_P), (65.0, DOWN_P)]
+L_KEYS = [(0, DOWN_P), (4.6, DOWN_P), (5.2, UP_P), (7.0, UP_P), (7.8, DOWN_P),
+          (22.0, DOWN_P), (23.0, (-90, 0, 90, 0)), (25.8, (-90, 0, 90, 0)), (26.8, DOWN_P),
+          (38.3, DOWN_P), (38.9, T_P), (41.8, T_P), (42.4, DOWN_P),
+          (44.3, DOWN_P), (44.9, CHEST_P), (48.8, CHEST_P), (49.4, DOWN_P),
+          (62.2, DOWN_P), (62.8, UP_P), (64.4, UP_P), (65.0, DOWN_P)]
+
+
+def pose_keyframe(t, keys):
+    """Arm pose parameters interpolated between keyframes, smooth."""
+    if t <= keys[0][0]:
+        return keys[0][1]
+    for (t0, p0), (t1, p1) in zip(keys, keys[1:]):
+        if t0 <= t < t1:
+            return tuple(lerp(p0, p1, smooth(t, t0, t1)))
+    return keys[-1][1]
+
+
 def demo_script(t):
-    """Scripted person of the video: position, crouch, arm directions (upper, forearm) in the body frame."""
+    """Scripted person of the demo: position, crouch, arm directions (upper, forearm) in the body frame."""
     x = 1.9
     x = lerp(x, 1.25, smooth(t, 8.0, 11.0))
     x = lerp(x, 2.55, smooth(t, 14.0, 19.0))
@@ -195,19 +225,10 @@ def demo_script(t):
     y = lerp(y, -0.55, smooth(t, 29.8, 32.6))
     y = lerp(y, 0.0, smooth(t, 32.8, 34.2))
     crouch = 0.38 * (smooth(t, 34.6, 35.6) - smooth(t, 36.6, 37.6))
-    l_up, l_fo = DOWN, DOWN
-    g = max(smooth(t, 4.6, 5.2) - smooth(t, 7.0, 7.8), smooth(t, 38.2, 38.8) - smooth(t, 40.4, 41.2))
-    up_pose = (nrm((0.1, 0.25, 1)), nrm((0, -0.1, 1)))
-    side, up = (0.05, -1, 0), (0.1, -0.2, 1)
-    r_up = keyframe(t, [(20.5, DOWN), (21.7, (1, 0, 0)), (22.6, (1, 0, 0)), (23.6, side), (24.4, side),
-                        (25.2, up), (26.0, up), (26.6, side), (27.4, DOWN)])
-    r_fo = r_up
-    e1 = smooth(t, 22.0, 23.0) - smooth(t, 25.8, 26.8)
-    l_fo = nrm(lerp(l_fo, (1, 0, 0), e1) + 1e-6)
-    ru, rf = up_pose[0] * np.array([1, -1, 1]), up_pose[1] * np.array([1, -1, 1])
-    r_up = nrm(lerp(r_up, ru, g) + 1e-6); r_fo = nrm(lerp(r_fo, rf, g) + 1e-6)
-    l_up = nrm(lerp(l_up, up_pose[0], g) + 1e-6); l_fo = nrm(lerp(l_fo, up_pose[1], g) + 1e-6)
-    return np.array([float(x), float(y)]), float(crouch), (r_up, r_fo, l_up, l_fo)
+    r = pose_keyframe(t, R_KEYS)
+    l = pose_keyframe(t, L_KEYS)
+    arms = (*arm_dirs(*r[:3], "right", r[3]), *arm_dirs(*l[:3], "left", l[3]))
+    return np.array([float(x), float(y)]), float(crouch), arms
 
 
 CAPTIONS = [
@@ -215,12 +236,15 @@ CAPTIONS = [
     (4.6, 7.8, "Gesture: both hands above the head for 1 s  ->  START"),
     (7.8, 13.5, "You come closer  ->  it backs off to keep the distance"),
     (13.5, 20.3, "You step back  ->  it comes forward"),
-    (20.3, 27.0, "Arms, mirror mode: your right arm -> its left arm. Never above the shoulder"),
-    (27.0, 34.4, "You move sideways  ->  the head keeps your face at the image center"),
+    (20.3, 27.4, "Arms, mirror mode: your right arm -> its left arm"),
+    (27.4, 34.4, "You move sideways  ->  the head keeps your face at the image center"),
     (34.4, 38.0, "You crouch  ->  the head looks down"),
-    (38.0, 42.0, "Gesture again  ->  STOP: arms down, base still, the head keeps looking at you"),
+    (38.0, 43.6, "EXPAND: arms open and held  ->  the target distance grows, it moves away"),
+    (43.6, 50.4, "ATTRACT: hands on the chest, held  ->  it reaches its arms out and comes closer"),
+    (50.4, 62.0, "Right hand up for 1 s  ->  PIROUETTE: arms open, head leads the turn, then back to mimicking"),
+    (62.0, 67.0, "Both hands above the head  ->  STOP: arms down, base still"),
 ]
-DEMO_LENGTH = 43.0
+DEMO_LENGTH = 67.0
 
 
 def demo_caption(t):
@@ -230,15 +254,24 @@ def demo_caption(t):
     return ""
 
 
-def arm_dirs(elev_deg, azim_deg, elbow_deg, side):
+def arm_dirs(elev_deg, azim_deg, elbow_deg, side, twist_deg=0.0):
     """Upper arm and forearm directions in the body frame (fwd, left, up) from GUI angles.
-    elev: -90 down, 0 horizontal, 90 up. azim: 0 forward, 90 out to the side. elbow: 0 straight."""
+    elev: -90 down, 0 horizontal, 90 up. azim: 0 forward, 90 out to the side. elbow: 0 straight.
+    twist: rotation of the elbow bend plane about the upper arm; > 0 turns the forearm toward the body midline
+    (0 = the forearm bends forward, 90 = it bends inward, e.g. hands on the chest)."""
     e, a, b = math.radians(elev_deg), math.radians(azim_deg), math.radians(elbow_deg)
     out = -1.0 if side == "right" else 1.0
     up = np.array([math.cos(e) * math.cos(a), out * math.cos(e) * math.sin(a), math.sin(e)])
     ref = np.array([1.0, 0, 0]) if abs(up[0]) < 0.9 else np.array([0, 0, 1.0])
     perp = ref - (ref @ up) * up
     perp = perp / np.linalg.norm(perp)
+    if twist_deg:
+        # rotate the bend direction about the upper arm; the sign makes positive twist go toward the midline
+        side_ax = np.cross(up, perp)
+        if side_ax[1] * out > 0:
+            side_ax = -side_ax
+        tw = math.radians(twist_deg)
+        perp = nrm(math.cos(tw) * perp + math.sin(tw) * side_ax)
     return nrm(up), nrm(math.cos(b) * up + math.sin(b) * perp)
 
 
@@ -281,7 +314,8 @@ class InteractivePerson:
 
     def __init__(self):
         self.target = dict(x=1.9, y=0.0, yaw=0.0, crouch=0.0,
-                           r_elev=-90.0, r_azim=0.0, r_elbow=0.0, l_elev=-90.0, l_azim=0.0, l_elbow=0.0)
+                           r_elev=-90.0, r_azim=0.0, r_elbow=0.0, r_twist=0.0,
+                           l_elev=-90.0, l_azim=0.0, l_elbow=0.0, l_twist=0.0)
         self.state = dict(self.target)
         self.vel = np.zeros(2)
 
@@ -295,8 +329,8 @@ class InteractivePerson:
 
     def pose(self):
         s = self.state
-        arms = (*arm_dirs(s["r_elev"], s["r_azim"], s["r_elbow"], "right"),
-                *arm_dirs(s["l_elev"], s["l_azim"], s["l_elbow"], "left"))
+        arms = (*arm_dirs(s["r_elev"], s["r_azim"], s["r_elbow"], "right", s["r_twist"]),
+                *arm_dirs(s["l_elev"], s["l_azim"], s["l_elbow"], "left", s["l_twist"]))
         return np.array([s["x"], s["y"]]), s["yaw"], s["crouch"], arms
 
 
@@ -343,6 +377,7 @@ class Sim:
         self.robot = robot or RobotKinematics()
         with ros_stubs():
             self.node = pf.PersonFollower()
+        self.dt = self.node.dt              # the simulation steps at the follower's own rate (follower.yaml)
         self.person = InteractivePerson()
         self.t = 0.0
         self.base_x = self.base_y = self.base_yaw = 0.0     # base pose on the floor, yaw > 0 = turned left
@@ -372,7 +407,8 @@ class Sim:
             self.person.step(self.dt)
         n.cb_upper(types.SimpleNamespace(left_meas_arm_shaft=list(n.q_l), right_meas_arm_shaft=list(n.q_r),
                                          left_meas_neck_shaft=n.yaw_cmd, right_meas_neck_shaft=n.pitch_cmd))
-        n.cb_lower(types.SimpleNamespace(pitch_angle=0.0))
+        # like the robot IMU: yaw_angle decreases when the base turns left (LQR: des_yaw_rate = -angular.z)
+        n.cb_lower(types.SimpleNamespace(pitch_angle=0.0, yaw_angle=-self.base_yaw))
         if t >= self.next_cam:
             self.next_cam += self.cam_dt
             T_cam = self.camera_pose()

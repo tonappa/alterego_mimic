@@ -130,6 +130,7 @@
     <dt>Distance</dt><dd id="dist">–</dd>
     <dt>Base velocity</dt><dd id="vel">–</dd>
     <dt>Base rotation</dt><dd id="rot">–</dd>
+    <dt>Gesture</dt><dd id="gesture">–</dd>
     <dt>Neck yaw, pitch</dt><dd id="neck">–</dd>
     <dt class="r">Left arm</dt><dd id="ql">–</dd>
     <dt class="b">Right arm</dt><dd id="qr">–</dd>
@@ -150,6 +151,10 @@
       <button class="chip" data-preset="r_fwd">Right forward</button>
       <button class="chip" data-preset="r_side">Right out</button>
       <button class="chip" data-preset="l_elbow">Left elbow 90°</button>
+      <button class="chip" data-preset="expand">Open arms (expand)</button>
+      <button class="chip" data-preset="attract">Hands on chest (attract)</button>
+      <button class="chip" data-preset="r_up">Right hand up (pirouette)</button>
+      <button class="chip" data-preset="l_up">Left hand up (pirouette)</button>
     </div>
     <h3 class="r">Right arm</h3>
     <label class="s">Elevation<input type="range" data-p="r_elev" min="-90" max="90" step="1"><output></output></label>
@@ -201,12 +206,16 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const COL = { red: 0xff3b30, blue: 0x007aff, person: 0xff9500, cam: 0x34c759 };
 const FX = 615, CX = 320, CY = 240;
 const $ = (id) => document.getElementById(id);
-const OPTION_LABELS = { track_head: 'Look at the face', turn_base: 'Turn toward the person', keep_distance: 'Keep the distance', mimic_arms: 'Mimic the arms', mirror: 'Mirror the arms' };
+const OPTION_LABELS = { track_head: 'Look at the face', turn_base: 'Turn toward the person', keep_distance: 'Keep the distance', mimic_arms: 'Mimic the arms', mirror: 'Mirror the arms',
+  gesture_expand_attract: 'Expand and attract', gesture_pirouette: 'Pirouette', gesture_freeze: 'Freeze', gesture_drop: 'Drop' };
 const PARAM_LABELS = { k_lin: 'Distance gain', dead_lin: 'Distance dead band', max_lin: 'Max base speed', min_distance: 'Min distance',
   k_head: 'Head gain', head_dead: 'Head dead band', joint_speed_deg_s: 'Arm speed', gesture_hold: 'Gesture hold', max_arm_elevation_deg: 'Max arm elevation',
-  turn_start: 'Turn when neck at', turn_gain: 'Turn gain', turn_max: 'Max turn speed' };
+  turn_start: 'Turn when neck at', turn_gain: 'Turn gain', turn_max: 'Max turn speed',
+  expand_rate: 'Expand speed', attract_rate: 'Attract speed', max_follow_distance: 'Max distance',
+  attract_min_distance: 'Attract min distance', pirouette_speed: 'Pirouette speed', pirouette_min_distance: 'Pirouette min distance' };
 const PARAM_UNITS = { k_lin: '', dead_lin: ' m', max_lin: ' m/s', min_distance: ' m', k_head: '', head_dead: ' rad', joint_speed_deg_s: '°/s', gesture_hold: ' s', max_arm_elevation_deg: '°',
-  turn_start: ' rad', turn_gain: '', turn_max: ' rad/s' };
+  turn_start: ' rad', turn_gain: '', turn_max: ' rad/s', expand_rate: ' m/s', attract_rate: ' m/s', max_follow_distance: ' m',
+  attract_min_distance: ' m', pirouette_speed: ' rad/s', pirouette_min_distance: ' m' };
 
 let toastTimer = null;
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 4200); }
@@ -308,7 +317,8 @@ setInterval(pullImage, 100);
 let built = false, dragging = null;
 function buildSettings(S) {
   const opt = $('options');
-  for (const k of ['track_head', 'turn_base', 'keep_distance', 'mimic_arms', 'mirror']) {
+  for (const k of ['track_head', 'turn_base', 'keep_distance', 'mimic_arms', 'mirror',
+                   'gesture_expand_attract', 'gesture_pirouette', 'gesture_freeze', 'gesture_drop']) {
     const row = document.createElement('label'); row.className = 'switchrow';
     row.innerHTML = `<span>${OPTION_LABELS[k]}</span><input type="checkbox" class="toggle" data-o="${k}">`;
     opt.appendChild(row);
@@ -387,10 +397,11 @@ function render() {
   $('cam').hidden = real && imgOk;
 
   // readouts
-  $('dist').textContent = S.d == null ? '–' : `${f(S.d)} m` + (S.d_ref ? `  (start ${f(S.d_ref)})` : '');
+  $('dist').textContent = S.d == null ? '–' : `${f(S.d)} m` + (S.d_ref ? `  (target ${f(S.d_ref)})` : '');
   $('vel').textContent = `${S.v >= 0 ? '+' : ''}${f(S.v)} m/s`;
   const w = S.w || 0;
   $('rot').textContent = Math.abs(w) < 0.005 ? 'still' : `${f(Math.abs(w))} rad/s ${w > 0 ? 'left' : 'right'}`;
+  $('gesture').textContent = S.gesture || '–';
   $('neck').textContent = `${f(S.yaw, 0)}°  ${f(S.pitch, 0)}°`;
   $('ql').textContent = [0, 1, 3].map(i => f(S.q_l[i], 0)).join('  ') + '°';
   $('qr').textContent = [0, 1, 3].map(i => f(S.q_r[i], 0)).join('  ') + '°';
@@ -438,8 +449,12 @@ document.querySelectorAll('input[data-p]').forEach(el => {
   el.addEventListener('change', () => { dragging = null; });
 });
 const PRESETS = {
-  hands_up: { r_elev: 80, r_azim: 20, r_elbow: 10, l_elev: 80, l_azim: 20, l_elbow: 10 },
-  down: { r_elev: -90, r_azim: 0, r_elbow: 0, l_elev: -90, l_azim: 0, l_elbow: 0 },
+  hands_up: { r_elev: 80, r_azim: 20, r_elbow: 10, r_twist: 0, l_elev: 80, l_azim: 20, l_elbow: 10, l_twist: 0 },
+  down: { r_elev: -90, r_azim: 0, r_elbow: 0, r_twist: 0, l_elev: -90, l_azim: 0, l_elbow: 0, l_twist: 0 },
+  expand: { r_elev: 0, r_azim: 88, r_elbow: 5, r_twist: 0, l_elev: 0, l_azim: 88, l_elbow: 5, l_twist: 0 },
+  attract: { r_elev: -55, r_azim: 5, r_elbow: 120, r_twist: 80, l_elev: -55, l_azim: 5, l_elbow: 120, l_twist: 80 },
+  r_up: { r_elev: 80, r_azim: 15, r_elbow: 5, r_twist: 0, l_elev: -90, l_azim: 0, l_elbow: 0, l_twist: 0 },
+  l_up: { l_elev: 80, l_azim: 15, l_elbow: 5, l_twist: 0, r_elev: -90, r_azim: 0, r_elbow: 0, r_twist: 0 },
   r_fwd: { r_elev: 0, r_azim: 0, r_elbow: 0 }, r_side: { r_elev: 0, r_azim: 88, r_elbow: 0 },
   l_elbow: { l_elev: -90, l_azim: 0, l_elbow: 90 },
 };
